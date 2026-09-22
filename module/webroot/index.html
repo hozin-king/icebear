@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Icebear</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="screen">
+    <header class="header">
+      <div class="brand" aria-hidden="true">🐻‍❄️</div>
+      <h1>Icebear</h1>
+      <p class="tagline">ARM32 → ARM64 native bridge translator</p>
+    </header>
+
+    <section class="card" id="status-card">
+      <h2>Status</h2>
+      <div id="status-body" class="status-body">
+        <span class="pill">Checking…</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Pick an app</h2>
+      <label class="field" for="app-select">
+        Installed apps (checked through Android itself, no extra tools needed)
+      </label>
+      <select id="app-select">
+        <option value="">Loading…</option>
+      </select>
+      <p class="hint" id="app-count"></p>
+
+      <label class="field" for="path-input">
+        …or a path to an APK file not installed yet (needs unzip on-device,
+        not every device has it, see the log if this fails)
+      </label>
+      <input id="path-input" type="text" autocomplete="off" spellcheck="false"
+             placeholder="/sdcard/Download/example.apk" />
+
+      <button id="check-button" disabled>Check compatibility</button>
+    </section>
+
+    <section class="card hidden" id="result-card">
+      <h2 id="result-title"></h2>
+      <ul id="result-notes"></ul>
+      <button id="install-button" class="hidden">Install</button>
+    </section>
+
+    <section class="card">
+      <label class="field-inline">
+        <input type="checkbox" id="advanced-toggle" />
+        Show command log (advanced)
+      </label>
+      <pre id="log" class="log hidden"></pre>
+    </section>
+
+    <footer class="footer">
+      Icebear · free, open source, GPL-3.0
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
