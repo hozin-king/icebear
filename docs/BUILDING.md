@@ -22,6 +22,19 @@ Exact Gradle/Kotlin/Compose Multiplatform versions are pinned in
 This kind of tooling moves fast; if a build fails on version resolution,
 check that file's comment first.
 
+## Fastest path: build the flashable module
+
+Two scripts get you from a clean checkout to `build/icebear-module.zip` on
+Linux or Windows (Git Bash/MSYS2/Cygwin), no admin rights:
+
+```
+bash scripts/setup_deps.sh   # portable NDK + CMake + Ninja + JDK 21 into build/tools/
+bash scripts/build_module.sh # builds libicebear_translator.so, packages the zip
+```
+
+See the README for details. Everything below documents the manual steps
+those scripts automate.
+
 ## Building `:core`
 
 Pure Kotlin/JVM, no Android or native dependencies. This is the easiest
