@@ -14,8 +14,7 @@ synthetic programs, not real app code yet.
   `src/decoder.c`, `src/interp.c`: the portable core. Handles the full A32
   data-processing set (`AND`, `EOR`, `SUB`, `RSB`, `ADD`, `ADC`, `SBC`,
   `RSC`, `TST`, `TEQ`, `CMP`, `CMN`, `ORR`, `MOV`, `BIC`, `MVN`, all 16
-  ARM ALU opcodes), `MUL` (not `MLA`, its accumulate-form sibling, that's
-  explicitly rejected rather than misdecoded, see below), `B`, `BL`, `BX`,
+  ARM ALU opcodes), `MUL`/`MLA`, `B`, `BL`, `BX`,
   and `LDR`/`STR`/`LDRB`/`STRB` (immediate offset only: no register-offset
   addressing, no post-indexing or writeback; `LDRB` zero-extends, there's
   no signed byte load). Register operand2 can carry a shift now:
@@ -120,8 +119,9 @@ synthetic programs, not real app code yet.
   `-Wall -Wextra -Werror -fsanitize=address,undefined`, including two
   negative tests that specifically try an out-of-bounds and a misaligned
   `LDR` and check they're rejected, not just that the happy path works,
-  and two more checking `MLA` and `S=0` `TST`/`TEQ`/`CMP`/`CMN` shapes are
-  rejected rather than misdecoded. Earlier rounds of this (the `BX`
+  and one more checking `S=0` `TST`/`TEQ`/`CMP`/`CMN` shapes are
+  rejected rather than misdecoded, plus new tests for `PUSH`/`POP`
+  round-trip, `MLA` execution, and register-specified shifts. Earlier rounds of this (the `BX`
   mask-width bug) caught real bugs during development, which is exactly
   the kind of mistake this subset of the project is prone to; more test
   cases from more people is how this gets more trustworthy, see
@@ -150,11 +150,7 @@ and NDK/bionic headers) does need the NDK toolchain; see `docs/BUILDING.md`.
 
 ## Where to look if you want to help
 
-- More A32 instructions: `PUSH`/`POP`/`STM`/`LDM` (stack save/restore,
-  needed for any real function's prologue/epilogue), `MLA` (`MUL`'s
-  accumulate-form sibling, decode already rejects it explicitly so it's
-  not silently wrong, just not implemented), register-specified shift
-  amount (`LSL Rs`, not just `LSL #imm`), register-offset and
+- More A32 instructions: register-offset and
   post-indexed/writeback addressing for `LDR`/`STR`/`LDRB`/`STRB`, the
   logical ops computing C from the shifter's carry-out instead of just
   leaving it alone, then Thumb-2. Each addition should come with a
