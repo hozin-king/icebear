@@ -24,12 +24,15 @@ typedef enum IcebearOp {
   ICEBEAR_OP_TST,
   ICEBEAR_OP_TEQ,
   ICEBEAR_OP_MUL,
+  ICEBEAR_OP_MLA,
   ICEBEAR_OP_SVC,
   ICEBEAR_OP_B,
   ICEBEAR_OP_BL,
   ICEBEAR_OP_BX,
   ICEBEAR_OP_LDR,
   ICEBEAR_OP_STR,
+  ICEBEAR_OP_STM,
+  ICEBEAR_OP_LDM,
 } IcebearOp;
 
 typedef struct IcebearInsn {
@@ -43,9 +46,14 @@ typedef struct IcebearInsn {
   uint32_t shift_type;   /* 0=LSL,1=LSR,2=ASR,3=ROR, register operand2 only */
   uint32_t shift_amount; /* 0-31, register operand2 only */
   int is_imm;            /* 1 if operand2 is the immediate form */
+  int shift_by_reg;      /* 1 if shift amount comes from Rs (not immediate) */
   int sets_flags;        /* the S bit */
-  int u;                 /* LDR/STR: 1 = add imm to base, 0 = subtract */
+  int u;                 /* LDR/STR: 1 = add imm to base, 0 = subtract;
+                            STM/LDM: 1 = increment, 0 = decrement */
   int b;                 /* LDR/STR: 1 = byte access, 0 = word */
+  int p;                 /* STM/LDM: 1 = pre-indexed, 0 = post-indexed */
+  int w;                 /* STM/LDM: 1 = write back final address to Rn */
+  uint32_t reg_list;     /* STM/LDM: 16-bit register list bitmask */
 } IcebearInsn;
 
 /* 0 and fills *out on success, -1 for anything outside native/README.md's

@@ -66,7 +66,9 @@ function checkCompatibility(abisPresent, supportedAbis, bridgeActive) {
       notes: ['Already ships a native ABI this device supports directly.'],
     };
   }
-  const is32BitOnly = abisPresent.every((abi) => abi === ARMEABI_V7A || abi === X86);
+  // Icebear's translator handles ARM32 only. x86/x86_64 are NOT translatable
+  // by this bridge, so they must not be counted as "32-bit-only we handle".
+  const is32BitOnly = abisPresent.every((abi) => abi === ARMEABI_V7A || abi === 'armeabi');
   if (!is32BitOnly) {
     return {
       verdict: 'BLOCKED',

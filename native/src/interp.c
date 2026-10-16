@@ -55,11 +55,50 @@ static uint32_t icebear_apply_shift(uint32_t value, uint32_t shift_type, uint32_
   }
 }
 
+/* Register-specified shift per ARM ARM: amount = Rs[7:0].
+ * LSL: 0=no shift, <32 shift, >=32 result 0.
+ * LSR: 0=no shift, <32 shift, >=32 result 0.
+ * ASR: 0=no shift, <32 shift, >=32 sign-fill.
+ * ROR: 0=no shift (NOT RRX), else ROR by (amount % 32), 0 remainder = no shift. */
+static uint32_t icebear_apply_reg_shift(uint32_t value, uint32_t shift_type, uint32_t rs_val) {
+  uint32_t amount = rs_val & 0xFFu;
+  switch (shift_type) {
+    case 0: /* LSL */
+      if (amount == 0) return value;
+      if (amount >= 32) return 0;
+      return value << amount;
+    case 1: /* LSR */
+      if (amount == 0) return value;
+      if (amount >= 32) return 0;
+      return value >> amount;
+    case 2: { /* ASR */
+      if (amount == 0) return value;
+      if (amount >= 32) {
+        return (value & 0x80000000u) ? 0xFFFFFFFFu : 0u;
+      }
+      uint32_t sign_fill = (value & 0x80000000u) ? (~0u << (32 - amount)) : 0u;
+      return (value >> amount) | sign_fill;
+    }
+    case 3: { /* ROR */
+      if (amount == 0) return value;
+      uint32_t r = amount % 32u;
+      if (r == 0) return value;
+      return (value >> r) | (value << (32 - r));
+    }
+    default:
+      return value;
+  }
+}
+
 static uint32_t icebear_read_operand2(const IcebearCpu* cpu, uint32_t addr, const IcebearInsn* insn) {
   if (insn->is_imm) {
     return insn->imm;
   }
   uint32_t value = icebear_read_reg(cpu, addr, insn->rm);
+  if (insn->shift_by_reg) {
+    uint32_t rs_val = icebear_read_reg(cpu, addr, insn->rs);
+    return icebear_apply_reg_shift(value, insn->shift_type, rs_val);
+  }
   return icebear_apply_shift(value, insn->shift_type, insn->shift_amount);
 }
 
@@ -300,12 +339,71 @@ int icebear_interp_run(IcebearCpu* cpu, IcebearMemory* mem, uint32_t stop_addr, 
           break;
         }
 
-        case ICEBEAR_OP_MUL: {
-          uint32_t result = icebear_read_reg(cpu, addr, insn.rm) * icebear_read_reg(cpu, addr, insn.rs);
+        case ICEBEAR_OP_MUL:
+        case ICEBEAR_OP_MLA: {
+          uint32_t prod = icebear_read_reg(cpu, addr, insn.rm) * icebear_read_reg(cpu, addr, insn.rs);
+          uint32_t result = insn.op == ICEBEAR_OP_MLA
+              ? prod + icebear_read_reg(cpu, addr, insn.rn)
+              : prod;
           cpu->r[insn.rd] = result;
           if (insn.sets_flags) {
-            /* MULS: C,V left as-is, same convention as the other logical-flag ops. */
+            /* MULS/MLAS: C,V left as-is, same convention as the other logical-flag ops. */
             icebear_set_nzcv(cpu, icebear_flags_for_logical(cpu, result));
+          }
+          break;
+        }
+
+        case ICEBEAR_OP_STM:
+        case ICEBEAR_OP_LDM: {
+          uint32_t base = icebear_read_reg(cpu, addr, insn.rn);
+          uint32_t nregs = 0;
+          for (uint32_t i = 0; i < 16; i++) {
+            if (insn.reg_list & (1u << i)) nregs++;
+          }
+          uint32_t total = nregs * 4u;
+
+          /* Compute start address per P/U combination. */
+          uint32_t start;
+          if (insn.u) {
+            start = insn.p ? base + 4u : base;          /* IB / IA */
+          } else {
+            start = insn.p ? base - total : base - total + 4u; /* DB / DA */
+          }
+
+          /* Bounds-check the whole transfer up front. */
+          if ((uint64_t)start + total > mem->size) {
+            return -1;
+          }
+          if ((start % 4u) != 0) {
+            return -1;
+          }
+
+          uint32_t cur = start;
+          if (insn.op == ICEBEAR_OP_STM) {
+            for (uint32_t i = 0; i < 16; i++) {
+              if (insn.reg_list & (1u << i)) {
+                icebear_store_u32_le(mem->bytes + cur,
+                                     icebear_read_reg(cpu, addr, i));
+                cur += 4u;
+              }
+            }
+          } else {
+            for (uint32_t i = 0; i < 16; i++) {
+              if (insn.reg_list & (1u << i)) {
+                /* PC loaded from LDM: real hardware would branch;
+                 * treat as unsupported to stay conservative. */
+                if (i == ICEBEAR_REG_PC) {
+                  return -1;
+                }
+                cpu->r[i] = icebear_load_u32_le(mem->bytes + cur);
+                cur += 4u;
+              }
+            }
+          }
+
+          if (insn.w) {
+            uint32_t new_base = insn.u ? base + total : base - total;
+            cpu->r[insn.rn] = new_base;
           }
           break;
         }

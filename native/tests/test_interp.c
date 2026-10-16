@@ -853,14 +853,18 @@ static int test_svc_stops_and_can_resume(void) {
 
 
 static int test_mla_and_s0_compares_rejected(void) {
-  /* MLA (the A=1 sibling of MUL) and TST/TEQ/CMP/CMN with S=0 both share
-   * bit patterns with real opcodes (AND/EOR and MRS/MSR respectively);
-   * decoding either as if they were is a silent-corruption bug waiting
-   * to happen, so both must be flatly rejected instead of guessed at. */
+  /* MLA is now supported (see decoder.c): verify it decodes with the right
+   * fields. TST/TEQ/CMP/CMN with S=0 share bit patterns with MRS/MSR and
+   * must still be flatly rejected instead of guessed at. */
   IcebearInsn insn;
   uint32_t mla = 0xE0203190u; /* mla r0, r0, r1, r3 */
-  if (icebear_decode(mla, &insn) == 0) {
-    fprintf(stderr, "FAIL(mla_and_s0_compares_rejected): mla was decoded, should be rejected\n");
+  if (icebear_decode(mla, &insn) != 0) {
+    fprintf(stderr, "FAIL(mla_and_s0_compares_rejected): mla was rejected, should decode\n");
+    return 1;
+  }
+  if (insn.op != ICEBEAR_OP_MLA || insn.rd != 0 || insn.rm != 0 ||
+      insn.rs != 1 || insn.rn != 3) {
+    fprintf(stderr, "FAIL(mla_and_s0_compares_rejected): mla decoded with wrong fields\n");
     return 1;
   }
   uint32_t cmp_s0 = 0xE1400001u; /* looks like "cmp r0,r1" but S=0: not really CMP */
@@ -870,12 +874,115 @@ static int test_mla_and_s0_compares_rejected(void) {
             "should be rejected\n");
     return 1;
   }
-  printf("ok: mla and S=0 tst/teq/cmp/cmn shapes correctly rejected\n");
+  printf("ok: mla decodes correctly; S=0 tst/teq/cmp/cmn shapes correctly rejected\n");
   return 0;
 }
 
-int main(void) {
-  int failures = 0;
+static int test_stm_ldm_push_pop(void) {
+  /* push {r0-r2}; pop {r0-r2} — symmetric round-trip.
+   * PUSH = STMDB SP!,{regs} = 0xE92D0007 (r0,r1,r2)
+   * POP  = LDMIA SP!,{regs} = 0xE8BD0007 (r0,r1,r2) */
+  static const uint32_t kProgram[] = {
+      0xE3A0000Au, /* mov r0, #10 */
+      0xE3A01014u, /* mov r1, #20 */
+      0xE3A0201Eu, /* mov r2, #30 */
+      0xE92D0007u, /* push {r0-r2} */
+      0xE3A00000u, /* mov r0, #0 (clobber) */
+      0xE3A01000u, /* mov r1, #0 */
+      0xE3A02000u, /* mov r2, #0 */
+      0xE8BD0007u, /* pop {r0-r2} */
+      0xE12FFF1Eu, /* bx lr */
+  };
+
+  uint8_t mem_buf[256];
+  load_words(mem_buf, sizeof(mem_buf), kProgram, 9);
+  IcebearMemory mem = {mem_buf, sizeof(mem_buf)};
+
+  IcebearCpu cpu;
+  for (int i = 0; i < 16; i++) cpu.r[i] = 0;
+  cpu.cpsr = 0;
+  cpu.r[ICEBEAR_REG_SP] = 200; /* stack grows down from here */
+  cpu.r[ICEBEAR_REG_LR] = 0xDEADBEEFu;
+
+  int rc = icebear_interp_run(&cpu, &mem, 0xDEADBEEFu, 100);
+  if (rc != 0) {
+    fprintf(stderr, "FAIL(stm_ldm_push_pop): interp returned %d\n", rc);
+    return 1;
+  }
+  if (cpu.r[0] != 10 || cpu.r[1] != 20 || cpu.r[2] != 30) {
+    fprintf(stderr, "FAIL(stm_ldm_push_pop): regs not restored (r0=%u r1=%u r2=%u)\n",
+            cpu.r[0], cpu.r[1], cpu.r[2]);
+    return 1;
+  }
+  if (cpu.r[ICEBEAR_REG_SP] != 200) {
+    fprintf(stderr, "FAIL(stm_ldm_push_pop): SP not restored (%u)\n",
+            cpu.r[ICEBEAR_REG_SP]);
+    return 1;
+  }
+  printf("ok: push/pop round-trip restores regs and SP\n");
+  return 0;
+}
+
+static int test_mla_exec(void) {
+  /* mla r2, r0, r1, r3  =>  r2 = r0*r1 + r3 = 6*7+8 = 50
+   * encoding: cond AL, 000000, A=1, S=0, Rd=2, Rn=3, Rs=1, 1001, Rm=0 */
+  static const uint32_t kProgram[] = {
+      0xE3A00006u, /* mov r0, #6 */
+      0xE3A01007u, /* mov r1, #7 */
+      0xE3A03008u, /* mov r3, #8 */
+      0xE0223190u, /* mla r2, r0, r1, r3 */
+      0xE12FFF1Eu, /* bx lr */
+  };
+
+  uint8_t mem_buf[64];
+  load_words(mem_buf, sizeof(mem_buf), kProgram, 5);
+  IcebearMemory mem = {mem_buf, sizeof(mem_buf)};
+
+  IcebearCpu cpu;
+  for (int i = 0; i < 16; i++) cpu.r[i] = 0;
+  cpu.cpsr = 0;
+  cpu.r[ICEBEAR_REG_LR] = 0xDEADBEEFu;
+
+  int rc = icebear_interp_run(&cpu, &mem, 0xDEADBEEFu, 100);
+  if (rc != 0 || cpu.r[2] != 50) {
+    fprintf(stderr, "FAIL(mla_exec): rc=%d r2=%u (want 50)\n", rc, cpu.r[2]);
+    return 1;
+  }
+  printf("ok: mla r2, r0, r1, r3 (r2 = 50)\n");
+  return 0;
+}
+
+static int test_reg_shift(void) {
+  /* mov r1, #2; add r2, r0, r0, LSL r1  =>  r2 = r0 + (r0 << 2) = 10 + 40 = 50
+   * add r2, r0, r0, LSL r1 = 0xE0802110: cond AL, 000, I=0, op=ADD(0100),
+   * S=0, Rn=r0, Rd=r2, shift: Rs=r1(0001), 0, type=LSL(00), 1, Rm=r0(0000)
+   * = 1110 0000 1000 0000 0010 0001 0001 0000 = 0xE0802110 */
+  static const uint32_t kProgram[] = {
+      0xE3A0000Au, /* mov r0, #10 */
+      0xE3A01002u, /* mov r1, #2 */
+      0xE0802110u, /* add r2, r0, r0, LSL r1 */
+      0xE12FFF1Eu, /* bx lr */
+  };
+
+  uint8_t mem_buf[64];
+  load_words(mem_buf, sizeof(mem_buf), kProgram, 4);
+  IcebearMemory mem = {mem_buf, sizeof(mem_buf)};
+
+  IcebearCpu cpu;
+  for (int i = 0; i < 16; i++) cpu.r[i] = 0;
+  cpu.cpsr = 0;
+  cpu.r[ICEBEAR_REG_LR] = 0xDEADBEEFu;
+
+  int rc = icebear_interp_run(&cpu, &mem, 0xDEADBEEFu, 100);
+  if (rc != 0 || cpu.r[2] != 50) {
+    fprintf(stderr, "FAIL(reg_shift): rc=%d r2=%u (want 50)\n", rc, cpu.r[2]);
+    return 1;
+  }
+  printf("ok: register-specified LSL shift (r2 = 50)\n");
+  return 0;
+}
+
+int main(void) {  int failures = 0;
   failures += test_mov_add_bx();
   failures += test_branch_and_flags();
   failures += test_load_store_roundtrip();
@@ -896,6 +1003,9 @@ int main(void) {
   failures += test_tst_teq_cmn_dont_write_rd();
   failures += test_mla_and_s0_compares_rejected();
   failures += test_svc_stops_and_can_resume();
+  failures += test_stm_ldm_push_pop();
+  failures += test_mla_exec();
+  failures += test_reg_shift();
 
   if (failures != 0) {
     fprintf(stderr, "%d test(s) failed\n", failures);

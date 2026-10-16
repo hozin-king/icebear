@@ -1,1 +1,6 @@
 ro.dalvik.vm.native.bridge=libicebear_translator.so
+# Allow the package installer to accept 32-bit APKs once the bridge is active.
+# Without this, APKs containing only armeabi-v7a libs are rejected at install time
+# even when a native bridge is present. (ARCHITECTURE.md § integration)
+ro.product.cpu.abilist=arm64-v8a,armeabi-v7a,armeabi
+ro.product.cpu.abilist32=armeabi-v7a,armeabi

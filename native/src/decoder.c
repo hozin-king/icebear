@@ -8,9 +8,13 @@ int icebear_decode(uint32_t word, IcebearInsn* out) {
   out->shift_type = 0;
   out->shift_amount = 0;
   out->is_imm = 0;
+  out->shift_by_reg = 0;
   out->sets_flags = 0;
   out->u = 0;
   out->b = 0;
+  out->p = 0;
+  out->w = 0;
+  out->reg_list = 0;
   out->op = ICEBEAR_OP_UNKNOWN;
 
   if (out->cond == 0xF) {
@@ -57,17 +61,57 @@ int icebear_decode(uint32_t word, IcebearInsn* out) {
     uint32_t rn_field = (word >> 12) & 0xF;
     uint32_t rs = (word >> 8) & 0xF;
     uint32_t rm = word & 0xF;
-    if (a) {
-      return -1; /* MLA, not supported yet */
+    if (rn_field == ICEBEAR_REG_PC || rd == ICEBEAR_REG_PC ||
+        rm == ICEBEAR_REG_PC || rs == ICEBEAR_REG_PC) {
+      return -1; /* PC as an operand is UNPREDICTABLE */
     }
-    if (rn_field != 0 || rd == ICEBEAR_REG_PC || rm == ICEBEAR_REG_PC || rs == ICEBEAR_REG_PC) {
-      return -1; /* SBZ violated, or PC as an operand, both UNPREDICTABLE */
+    if (!a && rn_field != 0) {
+      return -1; /* MUL: Rn field must be SBZ */
     }
-    out->op = ICEBEAR_OP_MUL;
+    out->op = a ? ICEBEAR_OP_MLA : ICEBEAR_OP_MUL;
     out->rd = rd;
     out->rm = rm;
     out->rs = rs;
+    out->rn = rn_field; /* MLA accumulate register; ignored for MUL */
     out->sets_flags = (int)s;
+    return 0;
+  }
+
+  /* Block data transfer (STM/LDM): bits 27-25 = 100.
+   * P (bit 24) = pre/post, U (bit 23) = up/down, S (bit 22) must be 0
+   * (S=1 with PC restores CPSR — privileged, not supported),
+   * W (bit 21) = writeback, L (bit 20) = 1 LDM / 0 STM.
+   * PUSH = STMDB SP!,{regs}; POP = LDMIA SP!,{regs}. */
+  if (((word >> 25) & 0x7) == 0x4) {
+    uint32_t p = (word >> 24) & 0x1;
+    uint32_t u = (word >> 23) & 0x1;
+    uint32_t s = (word >> 22) & 0x1;
+    uint32_t w = (word >> 21) & 0x1;
+    uint32_t l = (word >> 20) & 0x1;
+    uint32_t rn = (word >> 16) & 0xF;
+    uint32_t reg_list = word & 0xFFFF;
+
+    if (s) {
+      return -1; /* S=1 restores CPSR / user-mode banked regs: not supported */
+    }
+    if (reg_list == 0) {
+      return -1; /* empty register list is UNPREDICTABLE */
+    }
+    if (rn == ICEBEAR_REG_PC) {
+      return -1; /* PC as base is UNPREDICTABLE */
+    }
+    /* LDM with writeback where Rn is in the list and not the only reg:
+     * UNPREDICTABLE on real hardware; reject to stay safe. */
+    if (l && w && (reg_list & (1u << rn)) && (reg_list & ~(1u << rn))) {
+      return -1;
+    }
+
+    out->op = l ? ICEBEAR_OP_LDM : ICEBEAR_OP_STM;
+    out->rn = rn;
+    out->reg_list = reg_list;
+    out->p = (int)p;
+    out->u = (int)u;
+    out->w = (int)w;
     return 0;
   }
 
@@ -153,17 +197,28 @@ int icebear_decode(uint32_t word, IcebearInsn* out) {
       out->imm = val;
     } else {
       uint32_t shift_by_reg = (operand2 >> 4) & 0x1;
-      if (shift_by_reg) {
-        return -1; /* register-specified shift amount not supported yet */
-      }
       uint32_t shift_type = (operand2 >> 5) & 0x3;
-      uint32_t shift_amount = (operand2 >> 7) & 0x1F;
-      if (shift_type != 0 && shift_amount == 0) {
-        return -1; /* #0 means #32 for LSR/ASR, RRX for ROR, see decoder.h */
-      }
       out->rm = operand2 & 0xF;
       out->shift_type = shift_type;
-      out->shift_amount = shift_amount;
+      if (shift_by_reg) {
+        /* Register-specified shift: Rs in bits 11-8, bit 7 must be 0. */
+        if ((operand2 >> 7) & 0x1) {
+          return -1;
+        }
+        uint32_t rs = (operand2 >> 8) & 0xF;
+        if (rs == ICEBEAR_REG_PC) {
+          return -1; /* UNPREDICTABLE */
+        }
+        out->shift_by_reg = 1;
+        out->rs = rs;
+        out->shift_amount = 0; /* unused, amount read from Rs at runtime */
+      } else {
+        uint32_t shift_amount = (operand2 >> 7) & 0x1F;
+        if (shift_type != 0 && shift_amount == 0) {
+          return -1; /* #0 means #32 for LSR/ASR, RRX for ROR, see decoder.h */
+        }
+        out->shift_amount = shift_amount;
+      }
     }
     return 0;
   }

@@ -1,0 +1,82 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  core:
+    name: Kotlin core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      - name: Build core
+        run: ./gradlew :core:build --no-daemon
+      - name: Upload core jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-jar
+          path: core/build/libs/*.jar
+
+  native:
+    name: Native translator (Android arm64)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+      - name: Build translator
+        run: |
+          export ANDROID_NDK_HOME=$ANDROID_NDK_HOME
+          bash scripts/build_native.sh
+      - name: Upload translator .so
+        uses: actions/upload-artifact@v4
+        with:
+          name: translator-so
+          path: native/build/libicebear_translator.so
+
+  module:
+    name: Magisk/KSU module zip
+    runs-on: ubuntu-latest
+    needs: native
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+      - name: Build module
+        run: |
+          export ANDROID_NDK_HOME=$ANDROID_NDK_HOME
+          bash scripts/build_module.sh
+      - name: Upload module zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: icebear-module
+          path: build/icebear-module.zip
+
+  linux:
+    name: Linux standalone
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build linux loader
+        run: |
+          cmake -S linux -B linux/build
+          cmake --build linux/build
+      - name: Upload linux binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-loader
+          path: linux/build/icebear-linux
